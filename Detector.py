@@ -17,14 +17,24 @@ import math, pdb
 import matplotlib.pyplot as plt
 import matplotlib
 
+SIFT_MAX_INTERP_STEPS = 5
+SIFT_IMG_BORDER = 1
+
+# check if the index [i,j] is outof boundary interms of I.shape        
+def withinBound(I,i,j):
+    return i >= 0 and j >= 0 and i < I.shape[0] and j < I.shape[1]
+    
+# convert an rbg float image to a greyscale image
 def greyScale(img):
     IGrey = NP.zeros((img.shape[0], img.shape[1]),dtype='float')
     for x in range(img.shape[0]):
         for y in range(img.shape[1]):
             IGrey[x,y] = 0.2989*img[x,y,0]+0.5870*img[x,y,1]+0.1140*img[x,y,2]
     return IGrey
-    
-def computeGaussianKernel(sigma, width):
+
+# compute gaussian kernel   
+def computeGaussianKernel(sigma):
+    width = 1 + 2*(int(3.0*sigma))
     kernel = NP.zeros((width,width))
     sum = 0.0
     mean = width/2
@@ -38,6 +48,7 @@ def computeGaussianKernel(sigma, width):
             kernel[x,y] /= sum;      
     return kernel
 
+# compute the greyscale image, the edge strength, the edge orientation and x,y gradient
 def filteredGradient(filename,gaussianKernel):
     sobel_x = NP.array([[-1,0,1],[-2,0,2],[-1,0,1]]);
     sobel_y = NP.array([[1,2,1],[0,0,0],[-1,-2,-1]]);
@@ -69,17 +80,20 @@ def filteredGradient(filename,gaussianKernel):
         for y in range(F.shape[1]):
             F[x,y] = (F[x,y]-minF)/(maxF-minF)
     '''
-            
-    
     # compute the edge orientation D
     D = NP.zeros(IGrey.shape)
     atan2_vectorized = NP.vectorize(math.atan2)
     radians_to_degrees_vectorized = NP.vectorize(math.degrees)
     D = radians_to_degrees_vectorized(atan2_vectorized(Fy,Fx))
     return IGrey,F,D,Fx,Fy
-    
+
+
+
+#*******************************************************#
+#***********     Canny Edge Detector    ****************#  
+#*******************************************************#     
 def edgeDetector(filename,sigma, ThresH, ThresL):
-    gaussianKernel = computeGaussianKernel(sigma,7)
+    gaussianKernel = computeGaussianKernel(sigma)
     img,F,D,Fx,Fy = filteredGradient(filename,gaussianKernel)
     
     # nonmaximum suppression
@@ -172,13 +186,15 @@ def edgeDetector(filename,sigma, ThresH, ThresL):
 #    skimage.io.imsave(inputname+'_nonmaximum.png', I)      
     skimage.io.imsave(inputname+'_cannyEdge.png', mask)
     
-        
-def withinBound(I,i,j):
-    return i >= 0 and j >= 0 and i < I.shape[0] and j < I.shape[1]
 
+    
+    
+#***************************************************#
+#***********     Corner Detector    ****************#  
+#***************************************************# 
 def cornerDetector(filename,sigma,numNeigh,thres):
     # filtered gradient
-    gaussianKernel = computeGaussianKernel(sigma,7)
+    gaussianKernel = computeGaussianKernel(sigma)
     img,F,D,Fx,Fy = filteredGradient(filename,gaussianKernel)
     
     # finding corners
@@ -228,23 +244,131 @@ def cornerDetector(filename,sigma,numNeigh,thres):
                         img[pos[0]+y, pos[1]+x] = 1
                     
     inputname = filename[0:len(filename)-4] + '_cornerDetector_' + str(sigma) + '_' + str(numNeigh) + '_' + str(thres)
-    skimage.io.imsave(inputname+'_corners.png', img)    
+    skimage.io.imsave(inputname+'_corners.png', img)  
     
+
+
+
+
+#**************************************************#
+#****************     SIFT    *********************#  
+#**************************************************# 
+   
 # octaveNum: number of octaves
 # scaleNum: number of scales per octave
 # thresPeak: threshold the local extrema
 # thresEdge: threshold for eliminating edges
-def sift(filename,octaveNum,scaleNum,thresEdge,thresPeak):
-    DoG(filename, octaveNum, scaleNum)
+def sift(filename,octaveNum,scaleNum,thresPeak,thresEdge):
+    DoGPyramid = DoG(filename, octaveNum, scaleNum)
+    
+    # find keypoints
+    # contains 4 steps: 
+    # 1. find local extrema
+    # 2. Taylor series to get the true location
+    # 3. low contrast filtering by thresPeak
+    # 4. rejecting strong edges by thresEdge
+    for o in range(octaveNum):
+        for s in range(1,scaleNum+1,1):
+            for y in range(1,DoGPyramid[o,s].shape[0]-1,1):
+                for x in range(1,DoGPyramid[o,s].shape[1]-1,1):
+                    # step 1: find local extrema
+                    if is_extrema(DoGPyramid, o, s, y, x):
+                        feature = interpolate_extrema(DoGPyramid,o,s,y,x,scaleNum,thresPeak)
+                        print len(feature)
+                        
+            
     return octaveNum 
+
+# SIFT - determind whether DoG[y,x] at #o octave and #s scale is local extrema by comparing [y,x] with its 26 neighbors   
+def is_extrema(DoGPyramid, o, s, y, x):
+    val = DoGPyramid[o,s][y,x]
+    if val > 0:
+        for k in range(-1,2,1):
+            for j in range(-1,2,1):
+                for i in range(-1,2,1):
+                    if val < DoGPyramid[o,s+k][y+j,x+i]:
+                        return False
+    else:
+        for k in range(-1,2,1):
+            for j in range(-1,2,1):
+                for i in range(-1,2,1):
+                    if val > DoGPyramid[o,s+k][y+j,x+i]:
+                        return False
+    return True
+
+# SIFT - perform the sub-pixel estimation
+def interpolate_extrema(DoGPyramid, o, s, y, x, scaleNum,thresPeak):
+    imgHeight = DoGPyramid[o,s].shape[0]
+    imgWidth = DoGPyramid[o,s].shape[1]
+    it = 0
+    while it < SIFT_MAX_INTERP_STEPS:
+        offset_x, offset_y, offset_s = interpolate_step(DoGPyramid, o, s, y, x)
+        # if offset is larger than 0.5 in any dimension, then it means that the extremum lies cloaser to a different sample point
+        # in this case the sample point is changed and the interpolation performed instead about that point
+        if offset_x < 0.5 and offset_y < 0.5 and offset_s < 0.5:
+            break
+        x += round(offset_x)
+        y += round(offset_y)
+        s += round(offset_s)
+        
+        if s < 1 or s > scaleNum or y < SIFT_IMG_BORDER or y > imgHeight - SIFT_IMG_BORDER or x < SIFT_IMG_BORDER or x > imgWidth - SIFT_IMG_BORDER :
+            break
+            return []
+        it += 1
+    if it >= SIFT_MAX_INTERP_STEPS:
+        return []
+    offset = [offset_x, offset_y, offset_s]
+    derivative = derivativeD(DoGPyramid, o, s, y, x)
+    D_offset = DoGPyramid[o,s][y,x] + NP.dot(derivative,offset)*0.5
+    # since D value is recomputed, so we should refilter it by the thresPeak
+    if math.fabs(D_offset) < thresPeak:
+        return []
+    # contain x_origin, y_origin, x, y, o, s, offset_s
+    # [y_origin, x_origin] is computed by upsample [y,x] to the origin image
+    feature = {}
+    feature['o'] = o
+    feature['s'] = s
+    feature['y'] = y
+    feature['x'] = x
+    feature['off_s'] = offset_s
+    feature['y_origin'] = (y + offset_y) * (2.0**o)
+    feature['x_origin'] = (x + offset_x) * (2.0**o)
+    return feature
+    
+    
+    
+# SIFT - take taylor series expansion, minimize to  get offset of extrema trueLoc X^ = - secondDerivative * Derivative
+def interpolate_step(DoGPyramid, o, s, y, x):
+    hessian = hessianMatrix(DoGPyramid, o, s, y, x)
+    hessianInvert = linalg.inv(hessian)
+    derivative = derivativeD(DoGPyramid, o, s, y, x)
+    offset = NP.dot(hessianInvert,derivative)
+    offset = offset*-1.0
+    return offset[0], offset[1], offset[2]
+    
+# SIFT -     
+def derivativeD(DoGPyramid, o, s, y, x):
+    dx = (DoGPyramid[o,s][y,x+1] - DoGPyramid[o,s][y,x-1])/2.0
+    dy = (DoGPyramid[o,s][y+1,x] - DoGPyramid[o,s][y-1,x])/2.0
+    ds = (DoGPyramid[o,s+1][y,x] - DoGPyramid[o,s-1][y,x])/2.0
+    return [dx,dy,ds]
+
+def hessianMatrix(DoGPyramid, o, s, y, x):
+    dxx = DoGPyramid[o,s][y,x+1] + DoGPyramid[o,s][y,x-1] - 2.0 * DoGPyramid[o,s][y,x]
+    dyy = DoGPyramid[o,s][y+1,x] + DoGPyramid[o,s][y-1,x] - 2.0 * DoGPyramid[o,s][y,x]
+    dss = DoGPyramid[o,s+1][y,x] + DoGPyramid[o,s-1][y,x] - 2.0 * DoGPyramid[o,s][y,x]
+    dxy = (DoGPyramid[o,s][y+1,x+1]+DoGPyramid[o,s][y-1,x-1]-DoGPyramid[o,s][y-1,x+1]-DoGPyramid[o,s][y+1,x-1])/4.0
+    dxs = (DoGPyramid[o,s+1][y,x+1]+DoGPyramid[o,s-1][y,x-1]-DoGPyramid[o,s-1][y,x+1]-DoGPyramid[o,s+1][y,x-1])/4.0
+    dys = (DoGPyramid[o,s+1][y+1,x]+DoGPyramid[o,s-1][y-1,x]-DoGPyramid[o,s-1][y+1,x]-DoGPyramid[o,s+1][y-1,x])/4.0
+    hessian = [[dxx,dxy,dxs],[dxy,dyy,dys],[dxs,dys,dss]]
+    return hessian
     
 def DoG(filename,octaveNum,scaleNum):
     sigma = 0.5
-    width = 25
     inputname = filename[0:len(filename)-4] + '_sift'
     img = skimage.img_as_float(skimage.io.imread(filename))
     greyImg = greyScale(img)
-    gaussianKernel = computeGaussianKernel(sigma,width)
+    gaussianKernel = computeGaussianKernel(sigma)
     # upsample the image to get the -1 scale at first octave I (before upsample, blur the original image to denoise)
     greyImg = signal.convolve2d(greyImg,gaussianKernel,boundary='symm',mode='same')
     I = scipy.ndimage.interpolation.zoom(greyImg, 2.)
@@ -260,20 +384,18 @@ def DoG(filename,octaveNum,scaleNum):
     # compute the gaussian pyramid
     guassianPyramid = {}
     for o in range(octaveNum):
-        print 'sigmaBase',sigmaBase
         for s in range(scaleNum+3):
-#            sigma = sigmaBase*math.pow(2.0,o+float(s)/float(scaleNum))
-#            sigma = sigmaBase*(2.0**(o+s/scaleNum))
-            k = kBase**(o*scaleNum+s)
-            print '[',o,',',s,'] k = ', k
-            sigma = sigmaBase*k
-            gaussianKernel = computeGaussianKernel(sigma,width)
+            sigma = sigmaBase*(2.0**(o+float(s)/float(scaleNum)))
+#            k = kBase**(o*scaleNum+s)
+#            print '[',o,',',s,'] k = ', k
+#            sigma = sigmaBase*k
+            gaussianKernel = computeGaussianKernel(sigma)
             guassianPyramid[o,s] = signal.convolve2d(I,gaussianKernel,boundary='symm',mode='same')
             name = inputname + '_guassianPyramid_' + str(o) + '_' + str(s) + '.png'
             skimage.io.imsave(name, guassianPyramid[o,s])
-            print 'sigma',sigma
-#        sigmaBase = sigmaBase*2
-        I = scipy.ndimage.interpolation.zoom(guassianPyramid[o,scaleNum],.5)
+            print '[',o,',',s,'] sigma = ',sigma
+#        I = scipy.ndimage.interpolation.zoom(guassianPyramid[o,scaleNum],.5)
+        I = scipy.ndimage.interpolation.zoom(I,.5)
     
     # compute the DoG pyramid
     DoGPyramid = {}
@@ -316,7 +438,8 @@ def main():
                 
     '''
     inputfilename = 'building.jpg'
-    sift(inputfilename,3,3,3,4)
+    inputfilename = 'Lenna.png'
+    sift(inputfilename,4,3,0.03,4)
 
     
 if __name__ == "__main__": main()
