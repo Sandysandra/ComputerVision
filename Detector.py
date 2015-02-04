@@ -240,51 +240,48 @@ def sift(filename,octaveNum,scaleNum,thresEdge,thresPeak):
     
 def DoG(filename,octaveNum,scaleNum):
     sigma = 0.5
-    width = 7
+    width = 25
     inputname = filename[0:len(filename)-4] + '_sift'
     img = skimage.img_as_float(skimage.io.imread(filename))
     greyImg = greyScale(img)
     gaussianKernel = computeGaussianKernel(sigma,width)
-    # upsample the image to get the -1 scale at first octave
+    # upsample the image to get the -1 scale at first octave I (before upsample, blur the original image to denoise)
     greyImg = signal.convolve2d(greyImg,gaussianKernel,boundary='symm',mode='same')
-    I = scipy.ndimage.interpolation.zoom(greyImg, 2, order = 2)
-    
+    I = scipy.ndimage.interpolation.zoom(greyImg, 2.)
     skimage.io.imsave(inputname+'_grey.png', greyImg)
     skimage.io.imsave(inputname+'_upsampledGrey.png', I)
 #    pdb.set_trace()
+    
+    
     sigmaBase = 1.6
     kBase = 2.0**(1.0/scaleNum)
-    print kBase
+    print 'kBase = ',kBase
+    
+    # compute the gaussian pyramid
     guassianPyramid = {}
     for o in range(octaveNum):
         print 'sigmaBase',sigmaBase
         for s in range(scaleNum+3):
 #            sigma = sigmaBase*math.pow(2.0,o+float(s)/float(scaleNum))
 #            sigma = sigmaBase*(2.0**(o+s/scaleNum))
-            k = kBase**s
+            k = kBase**(o*scaleNum+s)
             print '[',o,',',s,'] k = ', k
             sigma = sigmaBase*k
             gaussianKernel = computeGaussianKernel(sigma,width)
-            newI = signal.convolve2d(I,gaussianKernel,boundary='symm',mode='same')
-            guassianPyramid[o,s] = newI
-            print sigma
-        sigmaBase = sigmaBase*2
-        I = scipy.ndimage.interpolation.zoom(guassianPyramid[o,scaleNum],.5)
-            
-    for o in range(octaveNum):
-        for s in range(scaleNum+3):
+            guassianPyramid[o,s] = signal.convolve2d(I,gaussianKernel,boundary='symm',mode='same')
             name = inputname + '_guassianPyramid_' + str(o) + '_' + str(s) + '.png'
             skimage.io.imsave(name, guassianPyramid[o,s])
+            print 'sigma',sigma
+#        sigmaBase = sigmaBase*2
+        I = scipy.ndimage.interpolation.zoom(guassianPyramid[o,scaleNum],.5)
     
+    # compute the DoG pyramid
     DoGPyramid = {}
-    
     for o in range(octaveNum):
         for s in range(scaleNum+2):
             DoGPyramid[o,s] = NP.subtract(guassianPyramid[o,s],guassianPyramid[o,s+1])
             name = inputname + '_DoGPyramid_' + str(o) + '_' + str(s) + '.png'
             skimage.io.imsave(name, DoGPyramid[o,s])
-    
-    
     return DoGPyramid
     
     
@@ -319,7 +316,7 @@ def main():
                 
     '''
     inputfilename = 'building.jpg'
-    sift(inputfilename,4,3,3,4)
+    sift(inputfilename,3,3,3,4)
 
     
 if __name__ == "__main__": main()
