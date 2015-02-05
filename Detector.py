@@ -20,17 +20,6 @@ import matplotlib
 SIFT_MAX_INTERP_STEPS = 5
 SIFT_IMG_BORDER = 1
 
-def test(a):
-    listA = []
-    i = 0
-    while i < 5:
-        if i == a:
-            return []
-        listA.append(i)
-        i += 1
-    return listA
-        
-
 # check if the index [i,j] is outof boundary interms of I.shape        
 def withinBound(I,i,j):
     return i >= 0 and j >= 0 and i < I.shape[0] and j < I.shape[1]
