@@ -309,10 +309,10 @@ def visualize(filename, img, localExtremaList, scaleNum, index):
             I[y,x] = img[y,x]
     
     sigmaBase = 1.6
-    numNeigh = 1
     for i in range(len(localExtremaList)):
         o,s,y,x,off_s,off_y,off_x = localExtremaList[i]
         sigma = sigmaBase*(2.0**(o+float(s+off_s)/float(scaleNum)))
+        numNeigh = int(round(sigma/2.0))
         y_origin = (y + off_y) * (2.0**(o-1))
         x_origin = (x + off_x) * (2.0**(o-1))
         for i in range(-numNeigh, numNeigh+1, 1):
@@ -323,7 +323,7 @@ def visualize(filename, img, localExtremaList, scaleNum, index):
     name = filename[0:len(filename)-4] + 'sift_keypoint_'+str(index)+'.png'
     skimage.io.imsave(name, I)
 #        print '[',o,',',s,'] -- (',y, ',',x,')'
-        
+       
 
 # SIFT - determind whether DoG[y,x] at #o octave and #s scale is local extrema by comparing [y,x] with its 26 neighbors   
 def is_extrema(DoGPyramid, o, s, y, x):
