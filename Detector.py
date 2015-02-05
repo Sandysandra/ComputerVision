@@ -20,6 +20,17 @@ import matplotlib
 SIFT_MAX_INTERP_STEPS = 5
 SIFT_IMG_BORDER = 1
 
+def test(a):
+    listA = []
+    i = 0
+    while i < 5:
+        if i == a:
+            return []
+        listA.append(i)
+        i += 1
+    return listA
+        
+
 # check if the index [i,j] is outof boundary interms of I.shape        
 def withinBound(I,i,j):
     return i >= 0 and j >= 0 and i < I.shape[0] and j < I.shape[1]
@@ -259,6 +270,7 @@ def cornerDetector(filename,sigma,numNeigh,thres):
 # thresPeak: threshold the local extrema
 # thresEdge: threshold for eliminating edges
 def sift(filename,octaveNum,scaleNum,thresPeak,thresEdge):
+    img = skimage.img_as_float(skimage.io.imread(filename))
     DoGPyramid = DoG(filename, octaveNum, scaleNum)
     
     # find keypoints
@@ -267,17 +279,62 @@ def sift(filename,octaveNum,scaleNum,thresPeak,thresEdge):
     # 2. Taylor series to get the true location
     # 3. low contrast filtering by thresPeak
     # 4. rejecting strong edges by thresEdge
+    pre_eliminate_thres = 0.5*thresPeak/scaleNum
+    localExtremaList = []
+    thresPeakList = []
+    interpExtremaList = []
+    edgeEliminatedList = []
     for o in range(octaveNum):
         for s in range(1,scaleNum+1,1):
             for y in range(1,DoGPyramid[o,s].shape[0]-1,1):
                 for x in range(1,DoGPyramid[o,s].shape[1]-1,1):
                     # step 1: find local extrema
                     if is_extrema(DoGPyramid, o, s, y, x):
-                        feature = interpolate_extrema(DoGPyramid,o,s,y,x,scaleNum,thresPeak)
-                        print len(feature)
-                        
-            
+                        localExtremaList.append([o,s,y,x,0,0,0])
+                        if math.fabs(DoGPyramid[o,s][y,x]) > pre_eliminate_thres:
+                            thresPeakList.append([o,s,y,x,0,0,0])
+                            # feature = [o,s,y,x,off_s,off_y,off_x]
+                            feature = interpolate_extrema(DoGPyramid,o,s,y,x,scaleNum,thresPeak)
+                            if len(feature) > 0:
+                                interpExtremaList.append(feature)
+                                [f_o, f_s, f_y, f_x, off_s, off_y, off_x] = feature
+                                
+                                if eliminatingEdgeResponse(DoGPyramid,f_o,f_s,f_y,f_x,thresEdge) == False:
+                                    edgeEliminatedList.append(feature)
+                            
+    print "#localExtrema: ", len(localExtremaList)
+    print "#thresPeakList: ", len(thresPeakList)
+    print "#interpExtrema: ", len(interpExtremaList)
+    print "#edgeEliminated: ", len(edgeEliminatedList)
+    visualize(filename,img,localExtremaList,scaleNum,0)
+    visualize(filename,img,thresPeakList,scaleNum,1)
+    visualize(filename,img,interpExtremaList,scaleNum,2)
+    visualize(filename,img,edgeEliminatedList,scaleNum,3)
     return octaveNum 
+
+def visualize(filename, img, localExtremaList, scaleNum, index):
+    magenta = [1,0,1]
+    I = NP.zeros(img.shape)
+    for y in range(I.shape[0]):
+        for x in range(I.shape[1]):
+            I[y,x] = img[y,x]
+    
+    sigmaBase = 1.6
+    numNeigh = 1
+    for i in range(len(localExtremaList)):
+        o,s,y,x,off_s,off_y,off_x = localExtremaList[i]
+        sigma = sigmaBase*(2.0**(o+float(s+off_s)/float(scaleNum)))
+        y_origin = (y + off_y) * (2.0**(o-1))
+        x_origin = (x + off_x) * (2.0**(o-1))
+        for i in range(-numNeigh, numNeigh+1, 1):
+            for j in range(-numNeigh, numNeigh+1, 1):
+                if i == -numNeigh or j == -numNeigh or i == numNeigh or j == numNeigh:
+                    if withinBound(I, y_origin+j, x_origin+i) and withinBound(I, y_origin, x_origin):
+                        I[y_origin+j, x_origin+i] = magenta
+    name = filename[0:len(filename)-4] + 'sift_keypoint_'+str(index)+'.png'
+    skimage.io.imsave(name, I)
+#        print '[',o,',',s,'] -- (',y, ',',x,')'
+        
 
 # SIFT - determind whether DoG[y,x] at #o octave and #s scale is local extrema by comparing [y,x] with its 26 neighbors   
 def is_extrema(DoGPyramid, o, s, y, x):
@@ -307,13 +364,12 @@ def interpolate_extrema(DoGPyramid, o, s, y, x, scaleNum,thresPeak):
         # in this case the sample point is changed and the interpolation performed instead about that point
         if offset_x < 0.5 and offset_y < 0.5 and offset_s < 0.5:
             break
-        x += round(offset_x)
-        y += round(offset_y)
-        s += round(offset_s)
-        
-        if s < 1 or s > scaleNum or y < SIFT_IMG_BORDER or y > imgHeight - SIFT_IMG_BORDER or x < SIFT_IMG_BORDER or x > imgWidth - SIFT_IMG_BORDER :
-            break
-            return []
+        else:
+            x += round(offset_x)
+            y += round(offset_y)
+            s += round(offset_s)
+            if s < 1 or s > scaleNum or y < SIFT_IMG_BORDER or y >= imgHeight - SIFT_IMG_BORDER or x < SIFT_IMG_BORDER or x >= imgWidth - SIFT_IMG_BORDER:
+                return []
         it += 1
     if it >= SIFT_MAX_INTERP_STEPS:
         return []
@@ -321,21 +377,23 @@ def interpolate_extrema(DoGPyramid, o, s, y, x, scaleNum,thresPeak):
     derivative = derivativeD(DoGPyramid, o, s, y, x)
     D_offset = DoGPyramid[o,s][y,x] + NP.dot(derivative,offset)*0.5
     # since D value is recomputed, so we should refilter it by the thresPeak
-    if math.fabs(D_offset) < thresPeak:
+    if math.fabs(D_offset) < thresPeak/scaleNum:
         return []
     # contain x_origin, y_origin, x, y, o, s, offset_s
     # [y_origin, x_origin] is computed by upsample [y,x] to the origin image
+    '''
     feature = {}
     feature['o'] = o
     feature['s'] = s
     feature['y'] = y
     feature['x'] = x
     feature['off_s'] = offset_s
-    feature['y_origin'] = (y + offset_y) * (2.0**o)
-    feature['x_origin'] = (x + offset_x) * (2.0**o)
+    feature['y_origin'] = (y + offset_y) * (2.0**(o-1))
+    feature['x_origin'] = (x + offset_x) * (2.0**(o-1))
+    '''
+    feature = [o,s,y,x,offset_s,offset_y,offset_x]
     return feature
-    
-    
+        
     
 # SIFT - take taylor series expansion, minimize to  get offset of extrema trueLoc X^ = - secondDerivative * Derivative
 def interpolate_step(DoGPyramid, o, s, y, x):
@@ -362,6 +420,21 @@ def hessianMatrix(DoGPyramid, o, s, y, x):
     dys = (DoGPyramid[o,s+1][y+1,x]+DoGPyramid[o,s-1][y-1,x]-DoGPyramid[o,s-1][y+1,x]-DoGPyramid[o,s+1][y-1,x])/4.0
     hessian = [[dxx,dxy,dxs],[dxy,dyy,dys],[dxs,dys,dss]]
     return hessian
+
+def eliminatingEdgeResponse(DoGPyramid, o, s, y, x, thresCurve):
+    dxx = DoGPyramid[o,s][y,x+1] + DoGPyramid[o,s][y,x-1] - 2.0 * DoGPyramid[o,s][y,x]
+    dyy = DoGPyramid[o,s][y+1,x] + DoGPyramid[o,s][y-1,x] - 2.0 * DoGPyramid[o,s][y,x]
+    dxy = (DoGPyramid[o,s][y+1,x+1]+DoGPyramid[o,s][y-1,x-1]-DoGPyramid[o,s][y-1,x+1]-DoGPyramid[o,s][y+1,x-1])/4.0
+    
+    tr = dxx + dyy
+    det = dxx*dyy - dxy*dxy
+    
+    if det <= 0:
+        return True
+    # when if statement is true, the keypoint won't be deleted
+    if tr*tr/det < (thresCurve+1.0)*(thresCurve+1.0)/thresCurve:
+        return False
+    return True
     
 def DoG(filename,octaveNum,scaleNum):
     sigma = 0.5
@@ -406,7 +479,6 @@ def DoG(filename,octaveNum,scaleNum):
             skimage.io.imsave(name, DoGPyramid[o,s])
     return DoGPyramid
     
-    
 def main():
     '''
     inputfilename = 'building.jpg'
@@ -439,7 +511,7 @@ def main():
     '''
     inputfilename = 'building.jpg'
     inputfilename = 'Lenna.png'
-    sift(inputfilename,4,3,0.03,4)
+    sift(inputfilename,4,3,0.04,10)
 
     
 if __name__ == "__main__": main()
