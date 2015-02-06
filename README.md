@@ -1,2 +1,2 @@
 # ComputerVision
-This repository contains some algorithms that used in computer vision field
+This repository contains some algorithms used in computer vision
