@@ -35,6 +35,7 @@ def greyScale(img):
 # compute gaussian kernel   
 def computeGaussianKernel(sigma):
     width = 1 + 2*(int(3.0*sigma))
+    width = 5
     kernel = NP.zeros((width,width))
     sum = 0.0
     mean = width/2
@@ -55,11 +56,11 @@ def filteredGradient(filename,gaussianKernel):
     img = skimage.img_as_float(skimage.io.imread(filename))
     
     # convert img to grayscale
-    IGrey = greyScale(img)
+    IGreyOrigin = greyScale(img)
 #    plt.imshow(IGrey, cmap = matplotlib.cm.Greys_r)
 #    plt.show()
     # smooth the image
-    IGrey = signal.convolve2d(IGrey,gaussianKernel,boundary='symm',mode='same')
+    IGrey = signal.convolve2d(IGreyOrigin,gaussianKernel,boundary='symm',mode='same')
     
     # compute the gradient (convolve with sobel)
     Fx = signal.convolve2d(IGrey,sobel_x,boundary='symm',mode='same')
@@ -85,9 +86,37 @@ def filteredGradient(filename,gaussianKernel):
     atan2_vectorized = NP.vectorize(math.atan2)
     radians_to_degrees_vectorized = NP.vectorize(math.degrees)
     D = radians_to_degrees_vectorized(atan2_vectorized(Fy,Fx))
-    return IGrey,F,D,Fx,Fy
+    inputname = filename[0:len(filename)-4]
+#    saveGradientImage(inputname+'_Fx.png',Fx)
+#    saveGradientImage(inputname+'_Fy.png',Fy)
+    saveMagnituteImage(inputname+'_F.png',F)
+    return IGreyOrigin,F,D,Fx,Fy
 
-
+def saveGradientImage(name,F):
+    I = NP.zeros((F.shape[0],F.shape[1],3))
+    red = 0
+    green = 1
+    maxF = NP.amax(F)
+    minF = NP.amin(F)
+    print name, minF, maxF
+    for y in range(F.shape[0]):
+        for x in range(F.shape[1]):
+            if F[y,x] >= 0:
+                I[y,x][red] = F[y,x]/maxF#min(1.0,F[y,x])#F[y,x]/maxF
+            if F[y,x] < 0:
+                I[y,x][green] = math.fabs(F[y,x]/minF)#min(1.0,math.fabs(F[y,x]))#math.fabs(F[y,x]/minF)
+    skimage.io.imsave(name, I)
+    
+def saveMagnituteImage(name,F):
+    I = NP.zeros(F.shape)
+    for y in range(F.shape[0]):
+        for x in range(F.shape[1]):
+            if F[y,x] > 1:
+                I[y,x] = 1
+            else:
+                I[y,x] = F[y,x]
+    skimage.io.imsave(name, I)
+    
 
 #*******************************************************#
 #***********     Canny Edge Detector    ****************#  
@@ -178,12 +207,8 @@ def edgeDetector(filename,sigma, ThresH, ThresL):
                 output[i+1,j+1] = I[i+1,j+1]
     
     inputname = filename[0:len(filename)-4] + '_edgeDetector_' + str(sigma) + '_' + str(ThresH) + '_' + str(ThresL)
-#    skimage.io.imsave(inputname+'_Fx.png', Fx)
-#    skimage.io.imsave(inputname+'_Fy.png', Fy)
-#    skimage.io.imsave(inputname+'_Grey.png', img)
-#    skimage.io.imsave(inputname+'_F.png', F)
-#    skimage.io.imsave(inputname+'_DStar.png', DStar)
-#    skimage.io.imsave(inputname+'_nonmaximum.png', I)      
+    
+    skimage.io.imsave(inputname+'_nonmaximum.png', I)      
     skimage.io.imsave(inputname+'_cannyEdge.png', mask)
     
 
@@ -203,6 +228,11 @@ def cornerDetector(filename,sigma,numNeigh,thres):
     for y in range(F.shape[0]):
         for x in range(F.shape[1]):
             C = NP.zeros((2,2))
+            C[0,0] = sumforC(Fx,Fx,y-numNeigh,y+numNeigh+1,x-numNeigh,x+numNeigh+1)
+            C[0,1] = sumforC(Fx,Fy,y-numNeigh,y+numNeigh+1,x-numNeigh,x+numNeigh+1)
+            C[1,0] = C[0,1]
+            C[1,1] = sumforC(Fy,Fy,y-numNeigh,y+numNeigh+1,x-numNeigh,x+numNeigh+1)
+            '''
             for j in range(-numNeigh, numNeigh+1, 1):
                 for i in range(-numNeigh, numNeigh+1, 1):
                     if withinBound(F, y+j, x+i):
@@ -210,7 +240,7 @@ def cornerDetector(filename,sigma,numNeigh,thres):
                         C[1,0] += Fx[y+j,x+i]*Fy[y+j,x+i]
                         C[0,1] += Fx[y+j,x+i]*Fy[y+j,x+i]
                         C[1,1] += Fy[y+j,x+i]*Fy[y+j,x+i]
-            
+            '''
             eigenvalues,principalComponents = linalg.eig(C)
             minEig = min(eigenvalues)
             if minEig > thres:
@@ -246,7 +276,22 @@ def cornerDetector(filename,sigma,numNeigh,thres):
     inputname = filename[0:len(filename)-4] + '_cornerDetector_' + str(sigma) + '_' + str(numNeigh) + '_' + str(thres)
     skimage.io.imsave(inputname+'_corners.png', img)  
     
-
+def sumforC(Fx, Fy, y1, y2, x1, x2):
+    if x1 < 0:
+        x1 = 0
+    if y1 < 0:
+        y1 = 0
+    if y2 >= Fx.shape[0]:
+        y2 = Fx.shape[0]-1
+    if x2 >= Fx.shape[0]:
+        x2 = Fx.shape[0]-1
+    FxNew = NP.asarray(Fx)
+    FyNew = NP.asarray(Fy)
+    mat1 = FxNew[y1:y2,x1:x2]
+    mat2 = FyNew[y1:y2,x1:x2]
+    mat2 = NP.transpose(mat2)
+    mat = NP.dot(mat1,mat2)
+    return sum(mat[i][i] for i in xrange(0, len(mat)))
 
 
 
@@ -312,14 +357,24 @@ def visualize(filename, img, localExtremaList, scaleNum, index):
     for i in range(len(localExtremaList)):
         o,s,y,x,off_s,off_y,off_x = localExtremaList[i]
         sigma = sigmaBase*(2.0**(o+float(s+off_s)/float(scaleNum)))
-        numNeigh = int(round(sigma/2.0))
         y_origin = (y + off_y) * (2.0**(o-1))
         x_origin = (x + off_x) * (2.0**(o-1))
+        # draw circle
+        for theata in range(0,360,5):
+            newX = round(x_origin + sigma*math.cos(theata))
+            newY = round(y_origin + sigma*math.sin(theata))
+            if withinBound(I, newY, newX) and withinBound(I, y_origin, x_origin):
+                I[newY, newX] = magenta
+        
+        '''
+        numNeigh = int(round(sigma/2.0))
+        # draw box
         for i in range(-numNeigh, numNeigh+1, 1):
             for j in range(-numNeigh, numNeigh+1, 1):
                 if i == -numNeigh or j == -numNeigh or i == numNeigh or j == numNeigh:
                     if withinBound(I, y_origin+j, x_origin+i) and withinBound(I, y_origin, x_origin):
                         I[y_origin+j, x_origin+i] = magenta
+        '''
     name = filename[0:len(filename)-4] + 'sift_keypoint_'+str(index)+'.png'
     skimage.io.imsave(name, I)
 #        print '[',o,',',s,'] -- (',y, ',',x,')'
@@ -469,13 +524,13 @@ def DoG(filename,octaveNum,scaleNum):
     return DoGPyramid
     
 def main():
-    '''
+    
     inputfilename = 'building.jpg'
     sigma = 2
-    thresH = 3
-    thresL = 20
+    thresH = 5
+    thresL = 10
     edgeDetector(inputfilename,sigma, thresH/10.0, thresL/100.0)
-    
+    '''
     inputfilename = 'checker.jpg'
     sigma = 2
     width = 7
@@ -485,22 +540,26 @@ def main():
 
     '''
     inputfilename = 'building.jpg'
-    for sigma in range (1, 8, 2):
+    for sigma in range (1, 5, 1):
         for thresH in range (3, 10, 2):
-            for thresL in range (5, 25, 5):
+            for thresL in range (5, 15, 5):
                 edgeDetector(inputfilename,sigma, thresH/10.0, thresL/100.0)
     
     
     inputfilename = 'checker.jpg'
-    for sigma in range(1,8,2):
+    for sigma in range(1,5,1):
         for width in range(2,8,2):
-            for thres in range(2,20,4):
+            for thres in range(1,10,2):
+                print 'sigma = ', sigma, ' width = ', width, ' thres = ', thres
                 cornerDetector(inputfilename,sigma,width,thres)
-                
-    '''
+    '''           
+    
+    
     inputfilename = 'building.jpg'
     inputfilename = 'Lenna.png'
-    sift(inputfilename,4,3,0.04,10)
+    inputfilename = 'mandrill.jpg'
+#    sift(inputfilename,4,3,0.04,10)
+    
 
     
 if __name__ == "__main__": main()
