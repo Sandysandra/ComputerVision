@@ -35,7 +35,6 @@ def greyScale(img):
 # compute gaussian kernel   
 def computeGaussianKernel(sigma):
     width = 1 + 2*(int(3.0*sigma))
-    width = 5
     kernel = NP.zeros((width,width))
     sum = 0.0
     mean = width/2
@@ -73,22 +72,15 @@ def filteredGradient(filename,gaussianKernel):
     for x in range(F.shape[0]):
         for y in range(F.shape[1]):
             F[x,y] = math.sqrt(Fx[x,y]*Fx[x,y] + Fy[x,y]*Fy[x,y])
-            maxF = max([maxF,F[x,y]])
-            minF = min([minF,F[x,y]])
-    '''
-    # re-scale the edge strength to range 0-1
-    for x in range(F.shape[0]):
-        for y in range(F.shape[1]):
-            F[x,y] = (F[x,y]-minF)/(maxF-minF)
-    '''
+
     # compute the edge orientation D
     D = NP.zeros(IGrey.shape)
     atan2_vectorized = NP.vectorize(math.atan2)
     radians_to_degrees_vectorized = NP.vectorize(math.degrees)
     D = radians_to_degrees_vectorized(atan2_vectorized(Fy,Fx))
     inputname = filename[0:len(filename)-4]
-#    saveGradientImage(inputname+'_Fx.png',Fx)
-#    saveGradientImage(inputname+'_Fy.png',Fy)
+    saveGradientImage(inputname+'_Fx.png',Fx)
+    saveGradientImage(inputname+'_Fy.png',Fy)
     saveMagnituteImage(inputname+'_F.png',F)
     return IGreyOrigin,F,D,Fx,Fy
 
@@ -108,13 +100,20 @@ def saveGradientImage(name,F):
     skimage.io.imsave(name, I)
     
 def saveMagnituteImage(name,F):
+    maxF = NP.amax(F)
+    minF = NP.amin(F)
     I = NP.zeros(F.shape)
+    for x in range(F.shape[0]):
+        for y in range(F.shape[1]):
+            I[x,y] = (F[x,y]-minF)/(maxF-minF)
+    '''
     for y in range(F.shape[0]):
         for x in range(F.shape[1]):
             if F[y,x] > 1:
                 I[y,x] = 1
             else:
                 I[y,x] = F[y,x]
+    '''
     skimage.io.imsave(name, I)
     
 
@@ -232,15 +231,7 @@ def cornerDetector(filename,sigma,numNeigh,thres):
             C[0,1] = sumforC(Fx,Fy,y-numNeigh,y+numNeigh+1,x-numNeigh,x+numNeigh+1)
             C[1,0] = C[0,1]
             C[1,1] = sumforC(Fy,Fy,y-numNeigh,y+numNeigh+1,x-numNeigh,x+numNeigh+1)
-            '''
-            for j in range(-numNeigh, numNeigh+1, 1):
-                for i in range(-numNeigh, numNeigh+1, 1):
-                    if withinBound(F, y+j, x+i):
-                        C[0,0] += Fx[y+j,x+i]*Fx[y+j,x+i]
-                        C[1,0] += Fx[y+j,x+i]*Fy[y+j,x+i]
-                        C[0,1] += Fx[y+j,x+i]*Fy[y+j,x+i]
-                        C[1,1] += Fy[y+j,x+i]*Fy[y+j,x+i]
-            '''
+
             eigenvalues,principalComponents = linalg.eig(C)
             minEig = min(eigenvalues)
             if minEig > thres:
@@ -260,8 +251,8 @@ def cornerDetector(filename,sigma,numNeigh,thres):
         pos = points[i]
         if mask[pos[0],pos[1]] == 0:
             L.append(pos)
-            for i in range(-2*(numNeigh+3), 2*(numNeigh+3)+1, 1):
-                for j in range(-2*(numNeigh+3), 2*(numNeigh+3)+1, 1):
+            for i in range(-1*(numNeigh+3), 1*(numNeigh+3)+1, 1):
+                for j in range(-1*(numNeigh+3), 1*(numNeigh+3)+1, 1):
                     if withinBound(F, pos[0]+j, pos[1]+i):
                         mask[pos[0]+j, pos[1]+i] = 1
 
@@ -425,16 +416,6 @@ def interpolate_extrema(DoGPyramid, o, s, y, x, scaleNum,thresPeak):
         return []
     # contain x_origin, y_origin, x, y, o, s, offset_s
     # [y_origin, x_origin] is computed by upsample [y,x] to the origin image
-    '''
-    feature = {}
-    feature['o'] = o
-    feature['s'] = s
-    feature['y'] = y
-    feature['x'] = x
-    feature['off_s'] = offset_s
-    feature['y_origin'] = (y + offset_y) * (2.0**(o-1))
-    feature['x_origin'] = (x + offset_x) * (2.0**(o-1))
-    '''
     feature = [o,s,y,x,offset_s,offset_y,offset_x]
     return feature
         
@@ -442,7 +423,7 @@ def interpolate_extrema(DoGPyramid, o, s, y, x, scaleNum,thresPeak):
 # SIFT - take taylor series expansion, minimize to  get offset of extrema trueLoc X^ = - secondDerivative * Derivative
 def interpolate_step(DoGPyramid, o, s, y, x):
     hessian = hessianMatrix(DoGPyramid, o, s, y, x)
-    hessianInvert = linalg.inv(hessian)
+    hessianInvert = linalg.pinv(hessian)
     derivative = derivativeD(DoGPyramid, o, s, y, x)
     offset = NP.dot(hessianInvert,derivative)
     offset = offset*-1.0
@@ -503,15 +484,11 @@ def DoG(filename,octaveNum,scaleNum):
     for o in range(octaveNum):
         for s in range(scaleNum+3):
             sigma = sigmaBase*(2.0**(o+float(s)/float(scaleNum)))
-#            k = kBase**(o*scaleNum+s)
-#            print '[',o,',',s,'] k = ', k
-#            sigma = sigmaBase*k
             gaussianKernel = computeGaussianKernel(sigma)
             guassianPyramid[o,s] = signal.convolve2d(I,gaussianKernel,boundary='symm',mode='same')
             name = inputname + '_guassianPyramid_' + str(o) + '_' + str(s) + '.png'
             skimage.io.imsave(name, guassianPyramid[o,s])
             print '[',o,',',s,'] sigma = ',sigma
-#        I = scipy.ndimage.interpolation.zoom(guassianPyramid[o,scaleNum],.5)
         I = scipy.ndimage.interpolation.zoom(I,.5)
     
     # compute the DoG pyramid
@@ -525,24 +502,28 @@ def DoG(filename,octaveNum,scaleNum):
     
 def main():
     
-    inputfilename = 'building.jpg'
+    inputfilename = 'ukulele.jpg'
     sigma = 2
-    thresH = 5
-    thresL = 10
-    edgeDetector(inputfilename,sigma, thresH/10.0, thresL/100.0)
-    '''
-    inputfilename = 'checker.jpg'
+    thresH = 0.3
+    thresL = 0.05
+    edgeDetector(inputfilename,sigma, thresH, thresL)
+    
     sigma = 2
     width = 7
-    thres = 5
-    cornerDetector(inputfilename,sigma,width,thres)
-    '''
-
+    thresEigen = 5
+    cornerDetector(inputfilename,sigma,width,thresEigen)
+    
+    octaveNum = 4
+    scaleNum = 3
+    thresContrast = 0.04
+    thresCurve = 10
+    sift(inputfilename,octaveNum,scaleNum,thresContrast,thresCurve)
+    
     '''
     inputfilename = 'building.jpg'
     for sigma in range (1, 5, 1):
         for thresH in range (3, 10, 2):
-            for thresL in range (5, 15, 5):
+            for thresL in range (5, 20, 5):
                 edgeDetector(inputfilename,sigma, thresH/10.0, thresL/100.0)
     
     
@@ -552,15 +533,8 @@ def main():
             for thres in range(1,10,2):
                 print 'sigma = ', sigma, ' width = ', width, ' thres = ', thres
                 cornerDetector(inputfilename,sigma,width,thres)
-    '''           
-    
-    
-    inputfilename = 'building.jpg'
-    inputfilename = 'Lenna.png'
-    inputfilename = 'mandrill.jpg'
-#    sift(inputfilename,4,3,0.04,10)
-    
-
+               
+    '''
     
 if __name__ == "__main__": main()
     
