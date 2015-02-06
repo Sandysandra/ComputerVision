@@ -89,7 +89,7 @@ def filteredGradient(filename,gaussianKernel):
     inputname = filename[0:len(filename)-4]
 #    saveGradientImage(inputname+'_Fx.png',Fx)
 #    saveGradientImage(inputname+'_Fy.png',Fy)
-    saveMagnituteImage(inputname+'_F.png',F)
+#    saveMagnituteImage(inputname+'_F.png',F)
     return IGreyOrigin,F,D,Fx,Fy
 
 def saveGradientImage(name,F):
@@ -207,7 +207,11 @@ def edgeDetector(filename,sigma, ThresH, ThresL):
                 output[i+1,j+1] = I[i+1,j+1]
     
     inputname = filename[0:len(filename)-4] + '_edgeDetector_' + str(sigma) + '_' + str(ThresH) + '_' + str(ThresL)
-    
+    skimage.io.imsave(inputname+'_Fx.png', Fx)
+    skimage.io.imsave(inputname+'_Fy.png', Fy)
+#    skimage.io.imsave(inputname+'_Grey.png', img)
+    skimage.io.imsave(inputname+'_F.png', F)
+#    skimage.io.imsave(inputname+'_DStar.png', DStar)
     skimage.io.imsave(inputname+'_nonmaximum.png', I)      
     skimage.io.imsave(inputname+'_cannyEdge.png', mask)
     
