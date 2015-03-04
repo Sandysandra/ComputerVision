@@ -108,7 +108,7 @@ def parseInput(filename):
     # extract non-face patches
     
     print len(faceBoundBox)
-    random.seed(32)
+    random.seed()
     numNonFaceFromEachImg = 100/len(faceBoundBox) + 1
     for i in range(100):
         imgIndex = i/numNonFaceFromEachImg
