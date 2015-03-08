@@ -16,7 +16,8 @@ import scipy, math, pdb, random
 from random import randint
 
 patchSize = 12
-windowSize = 20
+windowSize = 40
+M = 15
 
 def withinBound(I,y,x):
     return y >= 0 and x >= 0 and y < I.shape[0] and x < I.shape[1]
@@ -231,9 +232,9 @@ def gaussianDetectorPerPatch(tau_index, facePatch, meanPos, detPos, covkPos, mea
     #print 'firstPart = ', firstPartNeg, '| ENeg = ', expValueNeg
     #print probPos/probNeg
     if probPos >= probNeg:
-        return True
+        return [True,probPos-probNeg]
     else:
-        return False
+        return [False,probPos-probNeg]
 
 # compute the gaussian pyramid for an input image        
 def gaussianPyramid(filename,scaleNum):
@@ -252,6 +253,7 @@ def gaussianPyramid(filename,scaleNum):
 
 def gaussianDetector(tau_index, gaussPyr, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg):
     faceList = []
+    probability = []
     for i in range(len(gaussPyr)):
     	print 'Pyramid ', i
         I = gaussPyr[i]
@@ -260,20 +262,30 @@ def gaussianDetector(tau_index, gaussPyr, meanPos, detPos, covkPos, meanNeg, det
                 facePatch = I[y:y+windowSize, x:x+windowSize]
                 ratio = float(patchSize)/float(windowSize)
                 face = scipy.ndimage.interpolation.zoom(facePatch,ratio)
-                if gaussianDetectorPerPatch(tau_index,face, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg) == True:
-                    faceList.append([i,y,x])
-    return faceList
+                result = gaussianDetectorPerPatch(tau_index,face, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
+                if result[0] == True:
+                    faceList.append([y,x,i])
+                    probability.append(result[1])
+    finalFaceList = nonMaximumSuppression(faceList, probability, gaussPyr[0])
+    return finalFaceList
                 
-def visualizeFace(testImgName, faceList):
+def visualizeFace(typeOfClassifier, testImgName, faceList):
     img = skimage.img_as_float(skimage.io.imread(testImgName))
     for i in range(len(faceList)):
-        scale,posY,posX = faceList[i]
-        for y in range(0, patchSize*int(math.pow(2,scale))+1, 1):
-            for x in range(0, patchSize*int(math.pow(2,scale))+1, 1):
-                if x == 0 or y == 0 or x == patchSize*int(math.pow(2,scale)) or y == patchSize*int(math.pow(2,scale)):
-                    if withinBound(img, posY*int(math.pow(2,scale))+y, posX*int(math.pow(2,scale))+x):
-                        img[posY*int(math.pow(2,scale))+y, posX*int(math.pow(2,scale))+x] = 1
-    skimage.io.imsave(testImgName[0:len(testImgName)-4]+'_TestResult.png', img);
+    	posY,posX,scale = faceList[i]
+    	for y in range(0, windowSize*int(math.pow(2,scale))+1, 1):
+    		for x in range(0, windowSize*int(math.pow(2,scale))+1, 1):
+    			if x == 0 or y == 0 or x == windowSize*int(math.pow(2,scale)) or y == windowSize*int(math.pow(2,scale)):
+    				if withinBound(img, posY*int(math.pow(2,scale))+y, posX*int(math.pow(2,scale))+x):
+    					img[posY*int(math.pow(2,scale))+y, posX*int(math.pow(2,scale))+x] = 1
+    				
+    classifier = ''
+    if typeOfClassifier == 0:
+    	classifier = '_GaussianClassifier'
+    else:
+    	classifier = '_LogisticClassifier'
+    
+    skimage.io.imsave(testImgName[0:len(testImgName)-4]+classifier+'_TestResult.png', img);
 
 def computeG(w,x_i):
 	tmp = -1.0*np.dot(np.transpose(w),x_i)
@@ -296,12 +308,13 @@ def logisticDetectorPerPatch(face,w):
 	g = computeG(w,face)
 	#print 'g = ', g
 	if g >= 0.5:
-		return True
+		return [True,g]
 	else:
-		return False
+		return [False,g]
 
 def logisticDetector(gaussPyr,w):
     faceList = []
+    probability = []
     for i in range(len(gaussPyr)):
         print 'pyramid ',i
         I = gaussPyr[i]
@@ -314,72 +327,135 @@ def logisticDetector(gaussPyr,w):
                 newface = imgI.flatten()
                 facePatch[0:patchSize*patchSize] = newface
                 facePatch[patchSize*patchSize] = 1
-                if logisticDetectorPerPatch(facePatch, w) == True:
-                    faceList.append([i,y,x])
-    return faceList
+                result = logisticDetectorPerPatch(facePatch, w)
+                if result[0] == True:
+                    faceList.append([y,x,i])
+                    probability.append(result[1])
+    finalFaceList = nonMaximumSuppression(faceList, probability, gaussPyr[0])
+    return finalFaceList
+    
+def nonMaximumSuppression(faceList, probability, I):
+	if len(probability) > 0:
+		faceList, probability = zip(*sorted(zip(faceList, probability), reverse=True, key=lambda x: x[1]))
+	
+	L = []
+	mask = np.zeros(I.shape)
+	for i in range(len(faceList)):
+		pos = faceList[i]
+		scale = pos[2]
+		if mask[pos[0]*int(math.pow(2,scale)),pos[1]*int(math.pow(2,scale))] == 0:
+			L.append(pos)
+			for y in range(-windowSize-M*int(math.pow(2,scale)), 2*windowSize+M*int(math.pow(2,scale)), 1):
+				for x in range( -windowSize-M*int(math.pow(2,scale)), 2*windowSize+M*int(math.pow(2,scale)), 1):
+					if withinBound(I, pos[0]*int(math.pow(2,scale))+y, pos[1]*int(math.pow(2,scale))+x):
+						mask[pos[0]*int(math.pow(2,scale))+y, pos[1]*int(math.pow(2,scale))+x] = 1
+	return L
 
+def detectConfilition( mask, pos, I ):
+	scale = pos[2]
+	for y in range(windowSize*int(math.pow(2,scale))):
+		for x in range(windowSize*int(math.pow(2,scale))):
+			if withinBound(I, pos[0]*int(math.pow(2,scale))+y, pos[1]*int(math.pow(2,scale))+x):
+				if mask[pos[0]*int(math.pow(2,scale)),pos[1]*int(math.pow(2,scale))] == 1:
+					return False
+	return True
+
+def testGaussian(tau_index, testX, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg):
+	numCorrect = 0.0
+	for i in range(200):
+		test = testX[i]
+		result = gaussianDetectorPerPatch(tau_index,test, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
+		if result[0] == True:
+			if i < 100:
+				numCorrect += 1.0
+		else:
+			if i >= 100:
+				numCorrect += 1.0
+	return numCorrect/200.0
+    
+def testLogisitic(testX, w):
+	numCorrect = 0.0
+	for i in range(200):
+		test = testX[i]
+		result = logisticDetectorPerPatch(test,w)
+		if result[0] == True:
+			if i < 100:
+				numCorrect += 1.0
+		else:
+			if i >= 100:
+				numCorrect += 1.0
+	return numCorrect/200.0
+    
 def main():
     filename = 'faceList.txt'
-    testImgName = './images/am5020a.png'
+    testImgName = './images/Argentina.png'
     
     scaleNum = 3
-    trainX, trainY, testX = parseInput(filename)
+    #trainX, trainY, testX = parseInput(filename)
     trainX = skimage.img_as_float(skimage.io.imread('trainX.png'))
     testX = skimage.img_as_float(skimage.io.imread('testX.png'))
     trainY = np.zeros((200), dtype = 'float')
     testY = np.zeros((200), dtype = 'float')
     trainY[0:100] = 1.0
     testY[0:100] = 1.0
-    gaussPyr = gaussianPyramid(testImgName,scaleNum)
-    
-    
-    # Gaussian Detector
-    # detector proportional to P(x|face)*para / P(x|nonface)*(1-para)
-    tau_index = 20
-    meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg = computeGaussianModel(trainX, tau_index)
-    #faceList = gaussianDetector(tau_index, gaussPyr, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
-    #visualizeFace(testImgName, faceList)
-    #    testX[0:50] = trainX[100:150]
-    
-    numCorrect = 0.0;
-    for i in range(200):
-        test = testX[i]
-        test = np.reshape(test, (patchSize, patchSize))
-        if gaussianDetectorPerPatch(tau_index,test, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg) == True:
-            print i, 'Face'
-            if i < 100:
-            	numCorrect += 1.0
-        else:
-            print i, 'nonFace'
-            if i >= 100:
-            	numCorrect += 1.0
-    print 'Gaussian Detector Accuracy = ', numCorrect/200.0
-    
-    # Logistic Detector
     trainXL = np.zeros((200, patchSize*patchSize+1),dtype=np.dtype(np.float64))
     trainXL[:,0:patchSize*patchSize] = trainX
     trainXL[:,(patchSize*patchSize):(patchSize*patchSize+1)] = 1
     testXL = np.zeros((200, patchSize*patchSize+1),dtype=np.dtype(np.float64))
     testXL[:,0:patchSize*patchSize] = testX
     testXL[:,patchSize*patchSize:patchSize*patchSize+1] = 1
-    print 'trainXL Shape ',trainXL.shape
-    w = logisticRegression(trainXL, trainY, 0.5, 1000)
-    #faceList = logisticDetector(gaussPyr,w)
-    #visualizeFace(testImgName,faceList)
+    gaussPyr = gaussianPyramid(testImgName,scaleNum)
     
-    numCorrect = 0.0
-    for i in range(200):
-    	test = testXL[i]
-    	if logisticDetectorPerPatch(test,w) == True:
-    		print i, 'Face'
-    		if i < 100:
-    			numCorrect += 1.0
-    		
-    	else:
-    		print i, 'NonFace'
-    		if i >= 100:
-    			numCorrect += 1.0
-    print 'Logistic Detector Accuracy = ', numCorrect/200.0
+    
+    # Gaussian Detector
+    # detector proportional to P(x|face)*para / P(x|nonface)*(1-para)
+    gaussianAccuracy = []
+    tau_index_start = 4
+    tau_index_num = 20
+    tau_index_maxAccuracy = tau_index_start
+    gaussian_max_accuracy = 0.0
+    x = []
+    for i in range(tau_index_num):
+    	tau_index = tau_index_start + 2*i
+    	x.append(tau_index)
+    	meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg = computeGaussianModel(trainX, tau_index)
+    	accuracy = testGaussian(tau_index, testX, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
+    	print 'Gaussian accuracy k = ', tau_index, ' | ', accuracy
+    	gaussianAccuracy.append(accuracy)
+    	if accuracy > gaussian_max_accuracy:
+    		gaussian_max_accuracy = accuracy
+    		tau_index_maxAccuracy = tau_index
+    print 'max accuracy ', gaussian_max_accuracy, ' at tau_index=', tau_index_maxAccuracy
+    plt.plot(x, gaussianAccuracy, 'ro')
+    plt.show()
+    meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg = computeGaussianModel(trainX, tau_index_maxAccuracy)
+    faceList = gaussianDetector(tau_index, gaussPyr, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
+    visualizeFace(0,testImgName, faceList)
+    
+    # Logistic Detector
+    rate = 0.5
+    logisticAccuracy = []
+    iters_start = 50
+    iters_num = 20
+    iters_maxAccuracy = iters_start
+    logistic_max_accuracy = 0.0
+    y = []
+    for i in range(iters_num):
+    	iters = iters_start + 100*i
+    	y.append(iters)
+    	w = logisticRegression(trainXL, trainY, rate, iters)
+    	accuracy = testLogisitic(testXL, w)
+    	print 'Logistic accuracy it = ', iters, ' | ', accuracy
+    	logisticAccuracy.append(accuracy)
+    	if accuracy > logistic_max_accuracy:
+    		logistic_max_accuracy = accuracy
+    		iters_maxAccuracy = iters
+    plt.plot(y, logisticAccuracy, 'ro')
+    plt.show()
+    print 'max accuracy ', logistic_max_accuracy, ' at tau_index=', iters_maxAccuracy
+    w = logisticRegression(trainXL, trainY, rate, iters_maxAccuracy)
+    faceList = logisticDetector(gaussPyr,w)
+    visualizeFace(1,testImgName,faceList)
     
     		
 if __name__ == "__main__": main()
