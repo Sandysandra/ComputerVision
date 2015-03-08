@@ -16,8 +16,8 @@ import scipy, math, pdb, random
 from random import randint
 
 patchSize = 12
-windowSize = 40
-M = 15
+windowSize = 12
+M = 5
 
 def withinBound(I,y,x):
     return y >= 0 and x >= 0 and y < I.shape[0] and x < I.shape[1]
@@ -192,7 +192,6 @@ def computeGaussianModel(trainX, tau_index):
     UkPos = UPos[:,0:tau_index]
     covkPos = np.dot(np.dot(UkPos, scipy.linalg.inv(np.diag(SPos[0:tau_index]))), np.transpose(UkPos))
     detPos = np.linalg.det(np.diag(SPos[0:tau_index]))
-    print 'detPos = ',detPos
     
     
     trainNeg = trainX[100:trainX.shape[0],:]
@@ -209,9 +208,6 @@ def computeGaussianModel(trainX, tau_index):
     UkNeg = UNeg[:,0:tau_index]
     covkNeg = np.dot(np.dot(UkNeg, scipy.linalg.inv(np.diag(SNeg[0:tau_index]))), np.transpose(UkNeg))
     detNeg = np.linalg.det(np.diag(SNeg[0:tau_index]))
-    print 'detNeg = ', detNeg
-#    pdb.set_trace()
-    print trainPos.shape, len(meanPos), APos.shape, ANeg.shape, covPos.shape
     return meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg
 
 # decide if an input 12*12 patch is an face    
@@ -388,7 +384,7 @@ def testLogisitic(testX, w):
     
 def main():
     filename = 'faceList.txt'
-    testImgName = './images/Argentina.png'
+    testImgName = './images/board.png'
     
     scaleNum = 3
     #trainX, trainY, testX = parseInput(filename)
@@ -405,8 +401,9 @@ def main():
     testXL[:,0:patchSize*patchSize] = testX
     testXL[:,patchSize*patchSize:patchSize*patchSize+1] = 1
     gaussPyr = gaussianPyramid(testImgName,scaleNum)
+    rate = 0.5
     
-    
+    '''
     # Gaussian Detector
     # detector proportional to P(x|face)*para / P(x|nonface)*(1-para)
     gaussianAccuracy = []
@@ -428,12 +425,8 @@ def main():
     print 'max accuracy ', gaussian_max_accuracy, ' at tau_index=', tau_index_maxAccuracy
     plt.plot(x, gaussianAccuracy, 'ro')
     plt.show()
-    meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg = computeGaussianModel(trainX, tau_index_maxAccuracy)
-    faceList = gaussianDetector(tau_index, gaussPyr, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
-    visualizeFace(0,testImgName, faceList)
     
     # Logistic Detector
-    rate = 0.5
     logisticAccuracy = []
     iters_start = 50
     iters_num = 20
@@ -452,7 +445,15 @@ def main():
     		iters_maxAccuracy = iters
     plt.plot(y, logisticAccuracy, 'ro')
     plt.show()
-    print 'max accuracy ', logistic_max_accuracy, ' at tau_index=', iters_maxAccuracy
+    print 'max accuracy ', logistic_max_accuracy, ' at iters=', iters_maxAccuracy
+    '''
+    
+    tau_index_maxAccuracy = 12
+    meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg = computeGaussianModel(trainX, tau_index_maxAccuracy)
+    faceList = gaussianDetector(tau_index_maxAccuracy, gaussPyr, meanPos, detPos, covkPos, meanNeg, detNeg, covkNeg)
+    visualizeFace(0,testImgName, faceList)
+    
+    iters_maxAccuracy = 550
     w = logisticRegression(trainXL, trainY, rate, iters_maxAccuracy)
     faceList = logisticDetector(gaussPyr,w)
     visualizeFace(1,testImgName,faceList)
